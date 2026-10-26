@@ -12,10 +12,11 @@ Hangman as a Mortal Kombat II fight: educational and violent. Two fighters share
 | Right letter | Your fighter walks over and punches (10%) |
 | Right letters in a row | Every one after the first is a kick (15%) |
 | Letter that completes the word | Your MK2 special move (20%), then a new word |
-| Wrong letter | Your turn ends; the other fighter guesses |
+| Wrong letter | The other fighter walks over and punches you (10%), then it's their turn |
+| 15 seconds without a guess | Counts as a wrong letter; the timer is between the health bars |
 | A health bar empties | FINISH HIM / FINISH HER: the winner gets one fresh word |
-| Solve that word (3 misses allowed) | FATALITY |
-| Miss it | The loser falls over and you win without one |
+| Solve that word without a single miss, 15 seconds a letter | FATALITY |
+| One miss or running out of time | The loser falls over and you win without one |
 
 Words are 7 letters or longer, from "5000 Collegiate Words with Brief Definitions".
 
