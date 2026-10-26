@@ -1,9 +1,10 @@
 // The fight: two fighters share one SAT word. A right letter is a punch (a kick on a streak), the
-// letter that completes the word is a special move, a wrong letter passes the turn. Empty a health
-// bar and the winner gets one fresh word to earn the fatality.
+// letter that completes the word is a special move. A wrong letter, or 15 seconds without a guess,
+// gets you punched and passes the turn. Empty a health bar and the winner gets one fresh word: solve
+// it without a single miss for the fatality.
 
 const DAMAGE = { punch: 10, kick: 15, special: 20 };
-const FATALITY_MISSES = 3;
+const TURN_SECONDS = 15;
 const PRAISE = ['excellent', 'outstanding', 'superb', 'welldone'];
 
 class Fight {
@@ -19,7 +20,8 @@ class Fight {
     this.round = null;
     this.state = 'intro';
     this.finishing = false;
-    this.missesLeft = 0;
+    this.timeLeft = TURN_SECONDS;
+    this.attacker = null;
     this.banners = [];
     this.note = null;
     this.dim = 0;
@@ -60,6 +62,7 @@ class Fight {
 
   awaitTurn() {
     this.state = 'input';
+    this.timeLeft = TURN_SECONDS;
     Keyboard.enable(!this.cpu[this.turn]);
     if (this.cpu[this.turn]) this.run(this.cpuTurn());
   }
@@ -79,6 +82,14 @@ class Fight {
     if (this.state === 'input' && !this.cpu[this.turn] && /^[A-Z]$/.test(key)) this.guess(key);
   }
 
+  // The clock ran out: it counts as a wrong guess.
+  timeUp() {
+    this.state = 'busy';
+    Keyboard.enable(false);
+    Sound.play('buzz');
+    this.run(this.finishing ? this.fatalityGuess(null, 'miss') : this.fightGuess(null, 'miss'));
+  }
+
   guess(letter) {
     const result = this.round.guess(letter);
     if (result === 'repeat') {
@@ -96,11 +107,18 @@ class Fight {
     const me = this.fighters[this.turn];
     const foe = this.fighters[1 - this.turn];
     if (result === 'miss') {
+      // A miss costs you: the other fighter comes over and punches, then it is their turn.
       this.streak = 0;
       Sound.play('miss');
       if (Math.random() < 0.3) Sound.play('taunt');
-      this.setNote(`NO "${letter}" - ${foe.def.name}'S TURN`, 1.6);
-      await Clock.wait(1.1);
+      const what = letter ? `NO "${letter}"` : "TIME'S UP";
+      this.setNote(`${what} - ${foe.def.name} ATTACKS!`, 2.2);
+      await Clock.wait(0.5);
+      await this.strike(foe, me, 'punch');
+      if (me.health <= 0) {
+        await this.finishHim(foe, me);
+        return;
+      }
       this.turn = 1 - this.turn;
       this.awaitTurn();
       return;
@@ -129,6 +147,7 @@ class Fight {
 
   // Walk in, punch or kick, walk back.
   async strike(att, vic, kind) {
+    this.attacker = att;
     const gap = att.reach(kind) + vic.stanceW * 0.62 - 10;
     await att.walkTo(vic.x - att.dir * gap);
     att.play(kind, { next: null });
@@ -156,6 +175,7 @@ class Fight {
 
   // The word is complete: the guesser's MK2 special move.
   async special(att, vic) {
+    this.attacker = att;
     const sp = att.def.special;
     att.play('sp_throw', { next: null });
     Sound.play(`${att.slug}Special`) || Sound.play(att.female ? 'femaleAttack' : 'maleAttack');
@@ -239,10 +259,10 @@ class Fight {
     Sound.music('finishMusic', 0.5);
     await Clock.wait(1.8);
     this.turn = winner.side;
-    this.missesLeft = FATALITY_MISSES;
+    this.attacker = winner;
     this.solvedFlash = 0;
     this.hideWindow = false;
-    this.setNote(`${winner.def.name}: SOLVE THIS WORD FOR THE FATALITY`, 2.5);
+    this.setNote(`${winner.def.name}: NO MISSES FOR THE FATALITY`, 2.5);
     this.newWord();
     this.awaitTurn();
   }
@@ -256,14 +276,12 @@ class Fight {
         return;
       }
     } else {
-      this.missesLeft--;
+      // One miss, or running out of time, and the chance is gone.
       Sound.play('miss');
-      this.setNote(this.missesLeft ? `NO "${letter}" - ${this.missesLeft} ${this.missesLeft === 1 ? 'MISS' : 'MISSES'} LEFT` : 'TOO SLOW!', 1.6);
-      if (!this.missesLeft) {
-        await Clock.wait(0.9);
-        await this.plainWin();
-        return;
-      }
+      this.setNote(letter ? `NO "${letter}" - NO FATALITY` : 'TOO SLOW - NO FATALITY', 1.6);
+      await Clock.wait(0.9);
+      await this.plainWin();
+      return;
     }
     await Clock.wait(0.3);
     this.awaitTurn();
@@ -350,6 +368,13 @@ class Fight {
     this.dim += (this.dimTarget - this.dim) * Math.min(1, dt * 3);
     this.shake = Math.max(0, this.shake - dt);
     if (this.toastyT) this.toastyT = Math.max(0, this.toastyT - dt);
+    if (this.state === 'input') {
+      const before = Math.ceil(this.timeLeft);
+      this.timeLeft -= dt;
+      const now = Math.ceil(this.timeLeft);
+      if (now < before && now <= 5 && now > 0) Sound.play('cursor', 0.7);
+      if (this.timeLeft <= 0) this.timeUp();
+    }
   }
 
   draw(ctx) {
@@ -360,8 +385,8 @@ class Fight {
       ctx.fillStyle = `rgba(0, 0, 0, ${this.dim})`;
       ctx.fillRect(-10, -10, W + 20, H + 20);
     }
-    const top = this.fighters[this.turn];
-    for (const f of [this.fighters[1 - this.turn], top]) f.draw(ctx);
+    const top = this.attacker || this.fighters[this.turn];
+    for (const f of [this.fighters[1 - top.side], top]) f.draw(ctx);
     this.fx.draw(ctx);
     ctx.restore();
     this.drawHud(ctx);
@@ -374,12 +399,27 @@ class Fight {
     const [a, b] = this.fighters;
     healthBar(ctx, a, 12, 9, 162, false);
     healthBar(ctx, b, W - 12 - 162, 9, 162, true);
+    this.drawTimer(ctx);
     const blink = Math.floor(Clock.now * 3) % 2 === 0;
     for (const f of this.fighters) {
       const active = this.state === 'input' && this.turn === f.side;
       const label = this.player(f.side) + (active && blink ? '  - TURN' : '');
       text(ctx, label, f.side === 0 ? 13 : W - 13, 28, { size: 6, align: f.side === 0 ? 'left' : 'right',
         color: active ? '#ffe36a' : '#aaa' });
+    }
+  }
+
+  // MK2's round timer between the health bars: seconds left for this guess, flashing at 5 and under.
+  drawTimer(ctx) {
+    if (this.state === 'over' || this.hideWindow) return;
+    const secs = Math.max(0, Math.ceil(this.timeLeft));
+    if (secs <= 5 && this.state === 'input' && Math.floor(Clock.now * 4) % 2 === 0) return;
+    const digits = String(secs).padStart(2, '0').split('').map(d => prop('timer', d));
+    const width = digits.reduce((w, r) => w + r[2] + 1, -1);
+    let x = W / 2 - width / 2;
+    for (const r of digits) {
+      blit(ctx, Images[ASSETS.props.image], r, x, 8, false);
+      x += r[2] + 1;
     }
   }
 
@@ -390,7 +430,7 @@ class Fight {
     const w = W - 140;
     const h = 68;
     panel(ctx, x, y, w, h);
-    const header = this.finishing ? `FATALITY WORD - ${this.missesLeft} ${this.missesLeft === 1 ? 'MISS' : 'MISSES'} LEFT` : 'DEFINITION';
+    const header = this.finishing ? 'FATALITY WORD - NO MISSES' : 'DEFINITION';
     text(ctx, header, W / 2, y + 7, { size: 5.5, align: 'center', color: this.finishing ? '#ff5050' : '#d9a640' });
     // Definition, shrinking the type until it fits in three lines.
     let size = 7;
