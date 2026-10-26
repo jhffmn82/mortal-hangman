@@ -91,6 +91,7 @@ PROP_GROUPS = {
     "blood": None,  # everything in props/blood
     "gore": None,  # everything in props/bodyparts
     "fire": None,  # everything in props/fire
+    "timer": list("0123456789"),  # MK2's round-timer digits
 }
 
 
@@ -329,7 +330,7 @@ def build_arena(root, raw, arena):
 def build_props(root, raw):
     packer = Packer()
     groups = {}
-    folders = {"text": "text", "hud": "hud", "blood": "blood", "gore": "bodyparts", "fire": "fire"}
+    folders = {"text": "text", "hud": "hud", "blood": "blood", "gore": "bodyparts", "fire": "fire", "timer": "lifebars"}
     for group, ids in PROP_GROUPS.items():
         folder = os.path.join(raw, "props", folders[group])
         names = ids or sorted(n.rsplit(".", 1)[0] for n in os.listdir(folder) if n.endswith(".png"))
