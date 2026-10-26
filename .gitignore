@@ -1,0 +1,5 @@
+# Raw MK Warehouse downloads; tools/fetch_mkw.py fetches them again and tools/build_assets.py builds assets/ from them.
+raw/
+__pycache__/
+# The word book's own definitions: licensed for individual use only, so they stay on this PC.
+data/words-local.js

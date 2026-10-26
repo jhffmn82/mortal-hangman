@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mortal Hangman</title>
+<style>
+  :root { --gold: #f4c542; --blood: #b3000c; }
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'MK2', sans-serif; }
+  #screen { image-rendering: pixelated; display: block; touch-action: manipulation; }
+  #keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 6px 8px; max-width: 760px; }
+  #keys button {
+    font: 15px 'MK2', sans-serif; width: 34px; height: 34px; color: var(--gold); cursor: pointer;
+    background: linear-gradient(#3a0d0d, #140303); border: 2px solid #8a6a1e; border-radius: 3px;
+  }
+  #keys button:disabled { color: #555; border-color: #333; cursor: default; }
+  #keys button.wrong { color: #8a1010; }
+  #keys button.right { color: #4a7a2a; }
+  #keys.hidden { visibility: hidden; }
+  #help { font-size: 11px; color: #777; padding-bottom: 4px; text-align: center; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="400" height="254"></canvas>
+<div id="keys" class="hidden"></div>
+<div id="help">Type a letter to guess &middot; Enter to confirm &middot; 0 mutes &middot; Esc back to the title</div>
+<script src="js/data/fonts.js"></script>
+<script src="js/data/assets.js"></script>
+<script src="data/words.js"></script>
+<script src="data/words-local.js"></script>
+<script src="js/sfx.js"></script>
+<script src="js/hangman.js"></script>
+<script src="js/gfx.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/arena.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/fighter.js"></script>
+<script src="js/fight.js"></script>
+<script src="js/menus.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
