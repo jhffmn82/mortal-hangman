@@ -20,7 +20,6 @@ const Keyboard = {
   },
   show(on) {
     this.el.classList.toggle('hidden', !on);
-    Game.resize();
   },
   reset() {
     for (const b of Object.values(this.buttons)) {
@@ -60,8 +59,10 @@ const Game = {
     if (this.scene && this.scene.onKey) this.scene.onKey(k);
   },
 
+  // The letter keys keep their space even when hidden, so the screen is the same size on every
+  // screen (title, select, fight, win) instead of jumping when the keys come and go.
   resize() {
-    const keysH = Keyboard.el.classList.contains('hidden') ? 0 : Keyboard.el.offsetHeight;
+    const keysH = Keyboard.el.offsetHeight;
     const helpH = document.getElementById('help').offsetHeight;
     const availW = window.innerWidth;
     const availH = window.innerHeight - keysH - helpH - 4;
