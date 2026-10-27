@@ -14,7 +14,10 @@
     font: 15px 'MK2', sans-serif; width: 34px; height: 34px; color: var(--gold); cursor: pointer;
     background: linear-gradient(#3a0d0d, #140303); border: 2px solid #8a6a1e; border-radius: 3px;
   }
+  #keys button { position: relative; }
+  #keys button sub { position: absolute; right: 3px; bottom: 1px; font-size: 9px; color: #c9a24a; }
   #keys button:disabled { color: #555; border-color: #333; cursor: default; }
+  #keys button:disabled sub { color: #444; }
   #keys button.wrong { color: #8a1010; }
   #keys button.right { color: #4a7a2a; }
   #keys.hidden { visibility: hidden; }
