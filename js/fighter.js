@@ -1,7 +1,7 @@
 // One fighter on the arena floor: plays its MK2 animations anchored on the feet, walks, takes hits.
 
 // Frames per second for each animation, and how each one is pinned to the floor.
-const FPS = { stance: 9, walk: 15, punch: 20, kick: 20, uppercut: 16, hit: 14, fall: 12, dizzy: 8, victory: 8,
+const FPS = { stance: 9, walk: 15, punch: 20, kick: 20, roundhouse: 18, uppercut: 16, hit: 14, fall: 12, dizzy: 8, victory: 8,
   fatality: 9, sp_throw: 14 };
 const ANCHOR = { walk: 'center', fall: 'front' };
 const LOOPING = new Set(['stance', 'walk', 'dizzy']);
@@ -53,6 +53,22 @@ class Fighter {
     return this.def.female;
   }
 
+  // Back to full health on the starting mark, for the next round.
+  reset() {
+    this.health = this.shownHealth = this.lagHealth = 100;
+    this.x = this.home;
+    this.target = null;
+    this.push = 0;
+    this.visible = true;
+    this.frozen = false;
+    this.play('stance');
+  }
+
+  // The fall frame where the fighter lies flat, before the get-up frames.
+  get lyingFrame() {
+    return Math.floor(this.def.anims.fall.length * 0.55);
+  }
+
   play(anim, o = {}) {
     this.anim = anim;
     this.frames = this.def.anims[anim];
@@ -78,6 +94,16 @@ class Fighter {
   // The farthest any frame of an animation reaches in front of the back foot.
   reach(anim) {
     return Math.max(...this.def.anims[anim].map(r => r[2] - r[4]));
+  }
+
+  // The frame where an attack reaches farthest: that is when it connects.
+  contactFrame(anim) {
+    const frames = this.def.anims[anim];
+    let best = 0;
+    frames.forEach((r, i) => {
+      if (r[2] - r[4] >= frames[best][2] - frames[best][4]) best = i;
+    });
+    return best;
   }
 
   // Where a blow lands on this fighter: the front of the chest.

@@ -11,7 +11,8 @@ const Keyboard = {
   build() {
     for (const c of ALPHABET) {
       const b = document.createElement('button');
-      b.textContent = c;
+      b.innerHTML = `${c}<sub>${SCRABBLE[c]}</sub>`;
+      b.title = `${c}: ${SCRABBLE[c]} point${SCRABBLE[c] > 1 ? 's' : ''}`;
       b.addEventListener('click', () => Game.key(c));
       this.el.appendChild(b);
       this.buttons[c] = b;

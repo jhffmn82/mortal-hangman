@@ -6,6 +6,10 @@ const SFX = (() => {
   return {
     // Shao Kahn
     fight: g('shaokahn', ['00972']),
+    round: g('shaokahn', ['01103_01']),
+    round1: g('shaokahn', ['01103_02']),
+    round2: g('shaokahn', ['01106_02']),
+    round3: g('shaokahn', ['01109_02']),
     finishHim: g('shaokahn', ['00942']),
     finishHer: g('shaokahn', ['00945']),
     fatality: g('shaokahn', ['00948']),

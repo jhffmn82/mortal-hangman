@@ -1,10 +1,14 @@
-// The fight: two fighters share one SAT word. A right letter is a punch (a kick on a streak), the
-// letter that completes the word is a special move. A wrong letter, or 15 seconds without a guess,
-// gets you punched and passes the turn. Empty a health bar and the winner gets one fresh word: solve
-// it without a single miss for the fatality.
+// The fight: best of three rounds. In each round two fighters share one SAT word. A right letter's
+// Scrabble value picks the attack and its damage, and the letter that completes the word is a special
+// move. A wrong letter, or 15 seconds without a guess, gets you punched and passes the turn. Empty a
+// health bar to take the round; in the round that decides the match the winner instead gets FINISH
+// HIM and one fresh word, with three tries, for the fatality.
 
-const DAMAGE = { punch: 10, kick: 15, special: 20 };
+const PUNISH_DAMAGE = 10;
 const TURN_SECONDS = 15;
+const ROUNDS_TO_WIN = 2;
+const FATALITY_MISSES = 3;
+const TOASTY_SECONDS = 2.5;
 const PRAISE = ['excellent', 'outstanding', 'superb', 'welldone'];
 
 class Fight {
@@ -15,11 +19,14 @@ class Fight {
     this.cpu = opts.cpu;
     this.fx = new Effects();
     this.deck = opts.deck;
-    this.turn = Math.random() < 0.5 ? 0 : 1;
+    this.turn = 0;
     this.streak = 0;
     this.round = null;
+    this.roundNo = 0;
+    this.wins = [0, 0];
     this.state = 'intro';
     this.finishing = false;
+    this.missesLeft = 0;
     this.timeLeft = TURN_SECONDS;
     this.attacker = null;
     this.banners = [];
@@ -28,29 +35,52 @@ class Fight {
     this.dimTarget = 0;
     this.shake = 0;
     this.solvedFlash = 0;
+    this.revealing = false;
+    this.toastyT = 0;
     Keyboard.show(true);
     Keyboard.reset();
   }
 
   enter() {
-    this.run(this.intro());
+    this.run(this.startRound());
   }
 
   run(promise) {
     promise.catch(err => console.error(err));
   }
 
+  // True once the player has left this fight (Esc), so late async steps stop.
+  get gone() {
+    return Game.scene !== this;
+  }
+
   player(i) {
     return this.cpu[i] ? 'CPU' : this.cpu[1 - i] ? 'YOU' : `PLAYER ${i + 1}`;
   }
 
-  async intro() {
+  // ROUND N ... FIGHT!, both fighters fresh, and a coin toss for who guesses first.
+  async startRound() {
+    this.roundNo++;
+    this.state = 'intro';
+    this.finishing = false;
+    this.hideWindow = true;
+    this.round = null;
+    this.streak = 0;
+    this.attacker = null;
+    this.banners = [];
+    this.fx.clear();
+    this.dimTarget = 0;
+    for (const f of this.fighters) f.reset();
+    this.turn = Math.random() < 0.5 ? 0 : 1;
     await Clock.wait(0.5);
+    this.banner({ text: `ROUND ${this.roundNo}`, y: 150, size: 22, font: 'MK2' }, 1.6);
+    await Promise.all([Sound.say(['round', `round${this.roundNo}`]), Clock.wait(1.4)]);
+    if (this.gone) return;
     this.banner({ prop: '0311' }, 1.3);
     Sound.play('fight');
-    await Clock.wait(1.4);
-    const first = this.fighters[this.turn];
-    this.setNote(`COIN TOSS: ${first.def.name} GUESSES FIRST`, 2);
+    await Clock.wait(1.3);
+    this.hideWindow = false;
+    this.setNote(`COIN TOSS: ${this.fighters[this.turn].def.name} GUESSES FIRST`, 2);
     this.newWord();
     this.awaitTurn();
   }
@@ -75,11 +105,21 @@ class Fight {
   }
 
   onKey(key) {
+    if (key === ' ' && this.toastyT > 0) {
+      this.catchToasty();
+      return;
+    }
     if (this.state === 'over' && (key === 'Enter' || key === ' ')) {
       Game.show(new Select(this.opts));
       return;
     }
     if (this.state === 'input' && !this.cpu[this.turn] && /^[A-Z]$/.test(key)) this.guess(key);
+  }
+
+  onClick(x, y) {
+    const r = prop('hud', '0816');
+    if (this.toastyT > 0 && r && x > W - r[2] - 10 && y > H - r[3] - 16) this.catchToasty();
+    else if (this.state === 'over') this.onKey('Enter');
   }
 
   // The clock ran out: it counts as a wrong guess.
@@ -114,9 +154,9 @@ class Fight {
       const what = letter ? `NO "${letter}"` : "TIME'S UP";
       this.setNote(`${what} - ${foe.def.name} ATTACKS!`, 2.2);
       await Clock.wait(0.5);
-      await this.strike(foe, me, 'punch');
+      await this.strike(foe, me, 'punch', PUNISH_DAMAGE);
       if (me.health <= 0) {
-        await this.finishHim(foe, me);
+        await this.ko(foe, me);
         return;
       }
       this.turn = 1 - this.turn;
@@ -125,16 +165,23 @@ class Fight {
     }
     Sound.play('reveal');
     this.streak++;
+    const count = [...this.round.word].filter(c => c === letter).length;
+    const hit = attackFor(letter, count);
+    const pts = hit.value === 1 ? '1 POINT' : `${hit.value} POINTS`;
+    const times = count > 1 ? ` X${count}` : '';
     if (this.round.solved) {
       this.solvedFlash = 1;
       Sound.play(pickOf(PRAISE));
-      await this.special(me, foe);
+      this.setNote(`${letter} = ${pts}${times} - WORD DONE: SPECIAL MOVE (${hit.finisher})`, 2.6);
+      await this.special(me, foe, hit.finisher);
     } else {
-      if (this.streak >= 2) this.setNote(`${this.streak} IN A ROW - KICK!`, 1.4);
-      await this.strike(me, foe, this.streak >= 2 ? 'kick' : 'punch');
+      this.setNote(`${letter} = ${pts}${times} - ${ATTACK_NAMES[hit.kind]} (${hit.damage})`, 2.2);
+      if (hit.kind === 'special') await this.special(me, foe, hit.damage);
+      else if (hit.kind === 'uppercut') await this.uppercutStrike(me, foe, hit.damage);
+      else await this.strike(me, foe, hit.kind, hit.damage);
     }
     if (foe.health <= 0) {
-      await this.finishHim(me, foe);
+      await this.ko(me, foe);
       return;
     }
     if (this.round.solved) {
@@ -145,21 +192,81 @@ class Fight {
     this.awaitTurn();
   }
 
-  // Walk in, punch or kick, walk back.
-  async strike(att, vic, kind) {
+  // A health bar is empty: show the word, then either the next round or FINISH HIM.
+  async ko(winner, loser) {
+    this.state = 'busy';
+    await this.revealWord();
+    this.wins[winner.side]++;
+    if (this.wins[winner.side] >= ROUNDS_TO_WIN) await this.finishHim(winner, loser);
+    else await this.roundOver(winner, loser);
+  }
+
+  // The word is being dropped unfinished: every letter shows, the missing ones flashing red.
+  async revealWord() {
+    if (!this.round || this.round.solved) return;
+    this.hideWindow = false;
+    this.revealing = true;
+    this.setNote(`THE WORD WAS ${this.round.word}`, 1.6);
+    await Clock.wait(1.5);
+    this.revealing = false;
+  }
+
+  async roundOver(winner, loser) {
+    await Clock.until(() => loser.anim !== 'hit' && !(loser.anim === 'fall' && !loser.done));
+    this.hideWindow = true;
+    if (!(loser.anim === 'fall' && loser.stopAt === loser.lyingFrame)) {
+      loser.play('fall', { stopAt: loser.lyingFrame, next: null });
+      Sound.play('fallThud');
+    }
+    await winner.walkTo(winner.home);
+    winner.play('victory', { next: null });
+    this.banner({ wins: winner }, 4);
+    const flawless = winner.health >= 100;
+    await Promise.all([Sound.say([`name_${winner.slug}`, 'wins']), Clock.wait(1.6)]);
+    if (this.gone) return;
+    if (flawless) {
+      this.banner({ text: 'FLAWLESS VICTORY', y: 104 }, 2.2);
+      Sound.play('flawless');
+    }
+    await Clock.wait(2.4);
+    await this.startRound();
+  }
+
+  // Walk in, punch or kick, walk back. A punch or kick connects at full stretch and pulls back; a
+  // roundhouse connects mid-spin and plays through.
+  async strike(att, vic, kind, damage) {
     this.attacker = att;
     const gap = att.reach(kind) + vic.stanceW * 0.62 - 10;
     await att.walkTo(vic.x - att.dir * gap);
     att.play(kind, { next: null });
     if (Math.random() < 0.6) Sound.play(att.female ? 'femaleAttack' : 'maleAttack', 0.8);
     Sound.play('swing', 0.7);
-    await Clock.until(() => att.index >= att.frames.length - 1);
-    this.land(vic, DAMAGE[kind], att.dir, kind === 'kick' ? 'kickHit' : 'punchHit', kind === 'kick' ? 14 : 9);
-    if (kind === 'kick' && this.streak >= 3 && Math.random() < 0.35) this.toasty();
-    await Clock.wait(0.14);
-    att.play(kind, { reverse: true, next: null });
+    const contact = att.contactFrame(kind);
+    await Clock.until(() => att.index >= contact);
+    this.land(vic, damage, att.dir, kind === 'punch' ? 'punchHit' : 'kickHit', 6 + damage / 2);
+    this.maybeToasty(vic, damage);
+    if (contact >= att.frames.length - 1) {
+      await Clock.wait(0.14);
+      att.play(kind, { reverse: true, next: null });
+    }
     await Clock.until(() => att.done);
     await att.walkTo(att.home);
+  }
+
+  // Walk in and uppercut them off their feet.
+  async uppercutStrike(att, vic, damage) {
+    this.attacker = att;
+    const gap = att.reach('uppercut') + vic.stanceW * 0.62 - 12;
+    await att.walkTo(vic.x - att.dir * gap);
+    await this.uppercut(att, vic, damage);
+    this.maybeToasty(vic, damage);
+    await Clock.until(() => vic.anim !== 'hit' && !(vic.anim === 'fall' && !vic.done));
+    await Promise.all([att.walkTo(att.home), vic.health > 0 ? vic.walkTo(vic.home) : null]);
+  }
+
+  // Dan Forden pops up now and then after a hit, more often after a big one.
+  maybeToasty(vic, damage) {
+    if (vic.health > 0 && this.toastyT <= 0 && Math.random() < (damage >= 12 ? 0.3 : 0.08)) this.toasty();
   }
 
   // One blow lands: damage, blood, the thud and the victim's grunt.
@@ -173,8 +280,8 @@ class Fight {
     this.shake = Math.max(this.shake, damage >= 15 ? 0.25 : 0.12);
   }
 
-  // The word is complete: the guesser's MK2 special move.
-  async special(att, vic) {
+  // The guesser's MK2 special move: for completing the word, or for a 8- or 10-point letter.
+  async special(att, vic, damage) {
     this.attacker = att;
     const sp = att.def.special;
     att.play('sp_throw', { next: null });
@@ -192,7 +299,7 @@ class Fight {
     }
     if (sp.spear) {
       Sound.play('getOverHere');
-      vic.hurt(10, 0);
+      vic.hurt(Math.ceil(damage / 2), 0);
       vic.play('hit', { next: 'dizzy' });
       this.fx.blood(target.x, target.y, att.dir, 10);
       Sound.play('punchHit');
@@ -200,24 +307,24 @@ class Fight {
       await vic.walkTo(pullTo, 260);
       vic.play('dizzy');
       await Clock.wait(0.5);
-      await this.uppercut(att, vic, 10);
+      await this.uppercut(att, vic, Math.floor(damage / 2));
     } else if (sp.freeze) {
       Sound.play('freeze');
-      vic.hurt(10, 0);
+      vic.hurt(Math.ceil(damage / 2), 0);
       vic.play('hit', { next: null });
       vic.freeze(true);
       await Clock.wait(0.5);
       const gap = att.reach('uppercut') + vic.stanceW * 0.62 - 12;
       await att.walkTo(vic.x - att.dir * gap);
       vic.freeze(false);
-      await this.uppercut(att, vic, 10);
+      await this.uppercut(att, vic, Math.floor(damage / 2));
     } else {
-      this.knockdown(vic, DAMAGE.special, att.dir);
+      this.knockdown(vic, damage, att.dir);
       Sound.play('specialHit');
     }
-    await Clock.until(() => vic.anim !== 'fall' && vic.anim !== 'hit');
+    await Clock.until(() => vic.anim !== 'hit' && !(vic.anim === 'fall' && !vic.done));
     if (att.anim === 'sp_throw') att.play('stance');
-    await Promise.all([att.walkTo(att.home), vic.walkTo(vic.home)]);
+    await Promise.all([att.walkTo(att.home), vic.health > 0 ? vic.walkTo(vic.home) : null]);
   }
 
   async uppercut(att, vic, damage) {
@@ -231,25 +338,49 @@ class Fight {
     att.play('stance');
   }
 
+  // Knocked off their feet. Knocked out stays down, unless this decides the match: then they get
+  // back up dizzy for FINISH HIM.
   knockdown(vic, damage, dir) {
     const c = vic.chest();
     vic.hurt(damage, 0);
-    vic.play('fall', { next: vic.health > 0 ? 'stance' : 'dizzy' });
+    const out = vic.health <= 0;
+    const decides = out && this.wins[1 - vic.side] + 1 >= ROUNDS_TO_WIN;
+    if (out && !decides) vic.play('fall', { stopAt: vic.lyingFrame, next: null });
+    else vic.play('fall', { next: out ? 'dizzy' : 'stance' });
     this.fx.blood(c.x, c.y - 10, dir, 18);
     Sound.play(vic.female ? 'femaleHurt' : 'maleHurt');
     Sound.play('fallThud', 0.8);
     this.shake = 0.35;
   }
 
+  // Dan Forden pops up in the corner. Catch him (Space, or click/tap his head) for a free letter.
   toasty() {
     Sound.play('toasty');
-    this.toastyT = 1.2;
+    this.toastyT = TOASTY_SECONDS;
+    this.toastyCaught = false;
+  }
+
+  catchToasty() {
+    if (this.toastyCaught || !this.round || this.finishing) return;
+    this.toastyCaught = true;
+    this.toastyT = Math.min(this.toastyT, 0.4);
+    const hidden = [...new Set(this.round.word)].filter(c => !this.round.guessed.has(c));
+    if (hidden.length < 2) {
+      this.setNote('TOASTY! (NO FREE LETTER ON THE LAST ONE)', 1.8);
+      return;
+    }
+    const c = pickOf(hidden);
+    this.round.guessed.add(c);
+    Keyboard.mark(c, true);
+    Sound.play('reveal');
+    this.setNote(`TOASTY! FREE LETTER: ${c}`, 2.2);
   }
 
   async finishHim(winner, loser) {
     this.finishing = true;
     this.winner = winner;
     this.loser = loser;
+    this.toastyT = 0;
     await Clock.until(() => loser.anim !== 'fall' && loser.anim !== 'hit');
     await Promise.all([winner.walkTo(winner.home), loser.walkTo(loser.home)]);
     loser.play('dizzy');
@@ -260,9 +391,10 @@ class Fight {
     await Clock.wait(1.8);
     this.turn = winner.side;
     this.attacker = winner;
+    this.missesLeft = FATALITY_MISSES;
     this.solvedFlash = 0;
     this.hideWindow = false;
-    this.setNote(`${winner.def.name}: NO MISSES FOR THE FATALITY`, 2.5);
+    this.setNote(`${winner.def.name}: SOLVE IT FOR THE FATALITY`, 2.5);
     this.newWord();
     this.awaitTurn();
   }
@@ -276,12 +408,18 @@ class Fight {
         return;
       }
     } else {
-      // One miss, or running out of time, and the chance is gone.
+      // Three misses (running out of time counts as one) and the chance is gone.
+      this.missesLeft--;
       Sound.play('miss');
-      this.setNote(letter ? `NO "${letter}" - NO FATALITY` : 'TOO SLOW - NO FATALITY', 1.6);
-      await Clock.wait(0.9);
-      await this.plainWin();
-      return;
+      const what = letter ? `NO "${letter}"` : "TIME'S UP";
+      const left = this.missesLeft === 1 ? '1 TRY LEFT' : `${this.missesLeft} TRIES LEFT`;
+      this.setNote(this.missesLeft ? `${what} - ${left}` : `${what} - NO FATALITY`, 1.6);
+      if (!this.missesLeft) {
+        await Clock.wait(0.6);
+        await this.revealWord();
+        await this.plainWin();
+        return;
+      }
     }
     await Clock.wait(0.3);
     this.awaitTurn();
@@ -323,8 +461,7 @@ class Fight {
 
   async plainWin() {
     const { loser } = this;
-    const lying = Math.max(0, Math.floor(loser.def.anims.fall.length * 0.55));
-    loser.play('fall', { stopAt: lying, next: null });
+    loser.play('fall', { stopAt: loser.lyingFrame, next: null });
     Sound.play(loser.female ? 'femaleHurt' : 'maleHurt');
     Sound.play('fallThud');
     this.hideWindow = true;
@@ -339,6 +476,7 @@ class Fight {
     winner.play('victory', { next: null });
     this.banner({ wins: winner }, 999);
     await Sound.say([`name_${winner.slug}`, 'wins']);
+    if (this.gone) return;
     if (winner.health >= 100) {
       this.banner({ text: 'FLAWLESS VICTORY', y: 104 }, 999);
       Sound.play('flawless');
@@ -400,6 +538,14 @@ class Fight {
     healthBar(ctx, a, 12, 9, 162, false);
     healthBar(ctx, b, W - 12 - 162, 9, 162, true);
     this.drawTimer(ctx);
+    // A dragon medallion under the bar for each round won, as in MK2.
+    const medal = prop('hud', '0002');
+    for (const f of this.fighters) {
+      for (let i = 0; i < this.wins[f.side]; i++) {
+        const mx = f.side === 0 ? 174 - 13 * (i + 1) : W - 174 + 13 * i;
+        blit(ctx, Images[ASSETS.props.image], medal, mx, 21, false, 0.5);
+      }
+    }
     const blink = Math.floor(Clock.now * 3) % 2 === 0;
     for (const f of this.fighters) {
       const active = this.state === 'input' && this.turn === f.side;
@@ -430,25 +576,30 @@ class Fight {
     const w = W - 140;
     const h = 68;
     panel(ctx, x, y, w, h);
-    const header = this.finishing ? 'FATALITY WORD - NO MISSES' : 'DEFINITION';
+    const tries = this.missesLeft === 1 ? '1 TRY LEFT' : `${this.missesLeft} TRIES LEFT`;
+    const header = this.finishing ? `FATALITY WORD - ${tries}` : `ROUND ${this.roundNo} - DEFINITION`;
     text(ctx, header, W / 2, y + 7, { size: 5.5, align: 'center', color: this.finishing ? '#ff5050' : '#d9a640' });
     // Definition, shrinking the type until it fits in three lines.
     let size = 7;
     let lines = wrap(ctx, this.round.definition, w - 12, size);
     while (lines.length > 3 && size > 5) lines = wrap(ctx, this.round.definition, w - 12, (size -= 0.5));
     lines.forEach((l, i) => text(ctx, l, W / 2, y + 15 + i * (size + 1), { size, align: 'center', color: '#f2f2f2' }));
-    // The word: letters found so far over underscores.
+    // The word: letters found so far over underscores. When an unfinished word is being dropped,
+    // the letters nobody found show too, flashing red.
     const word = this.round.word;
     const slot = Math.min(13, (w - 16) / word.length);
     const startX = W / 2 - (slot * word.length) / 2;
     const base = y + 45;
     const pattern = this.round.pattern();
     const glow = this.solvedFlash && Math.floor(Clock.now * 8) % 2 === 0;
+    const flash = Math.floor(Clock.now * 6) % 2 === 0;
+    const size2 = Math.min(12, slot * 0.95);
     for (let i = 0; i < word.length; i++) {
       const cx = startX + slot * i + slot / 2;
       ctx.fillStyle = '#d9a640';
       ctx.fillRect(cx - slot * 0.36, base + 1.5, slot * 0.72, 1);
-      if (pattern[i]) text(ctx, pattern[i], cx, base, { size: Math.min(12, slot * 0.95), align: 'center', color: glow ? '#ffffff' : 'gold' });
+      if (pattern[i]) text(ctx, pattern[i], cx, base, { size: size2, align: 'center', color: glow ? '#ffffff' : 'gold' });
+      else if (this.revealing) text(ctx, word[i], cx, base, { size: size2, align: 'center', color: flash ? '#ff2a2a' : '#ffffff' });
     }
     // Letters guessed so far: found in gold, misses in red.
     const used = [...this.round.guessed];
@@ -496,7 +647,7 @@ class Fight {
           if (Math.floor(Clock.now * 2) % 2 === 0) text(ctx, 'PRESS ENTER TO FIGHT AGAIN', W / 2, 250, { size: 8, align: 'center', color: 'gold' });
         }
       } else if (b.text) {
-        text(ctx, b.text, W / 2, b.y || 130, { size: 14, align: 'center', color: 'gold', font: 'MKTitle' });
+        text(ctx, b.text, W / 2, b.y || 130, { size: b.size || 14, align: 'center', color: 'gold', font: b.font || 'MKTitle' });
       }
     }
   }
@@ -504,9 +655,13 @@ class Fight {
   drawToasty(ctx) {
     const r = prop('hud', '0816');
     if (!r) return;
-    const slide = Math.min(1, (1.2 - this.toastyT) * 8, this.toastyT * 8);
-    blit(ctx, Images[ASSETS.props.image], r, W - r[2] * slide, H - r[3], false);
-    text(ctx, 'TOASTY!', W - r[2] * slide + r[2] / 2, H - r[3] - 3, { size: 8, align: 'center', color: '#ff9030' });
+    const slide = Math.min(1, (TOASTY_SECONDS - this.toastyT) * 8, this.toastyT * 8);
+    const left = W - r[2] * slide;
+    blit(ctx, Images[ASSETS.props.image], r, left, H - r[3], false);
+    text(ctx, 'TOASTY!', left + r[2] / 2, H - r[3] - 10, { size: 8, align: 'center', color: '#ff9030' });
+    if (!this.toastyCaught && Math.floor(Clock.now * 5) % 2 === 0) {
+      text(ctx, 'SPACE OR TAP: FREE LETTER', left + r[2] / 2 - 18, H - r[3] - 2, { size: 5.5, align: 'center', color: '#fff' });
+    }
   }
 }
 
