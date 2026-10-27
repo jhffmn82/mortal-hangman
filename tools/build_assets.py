@@ -35,6 +35,7 @@ COMMON = {
     "walk": ("walk", r"^\d+$"),
     "punch": ("punch", ["01", "02", "03"]),
     "kick": ("kick", r"^\d+$"),
+    "roundhouse": ("kick", r"^r\d+$"),
     "uppercut": ("punch", r"^u\d+$"),
     "hit": ("hit", r"^h\d+$"),
     "fall": ("fall", r"^f\d+$"),
